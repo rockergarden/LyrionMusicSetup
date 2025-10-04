@@ -168,3 +168,48 @@ else
 fi
 
 echo "Puedes ahora volver a ejecutar ./install.sh para una instalación limpia."
+
+# Forzar parada/limpieza adicional (procesos huérfanos y /etc/init.d)
+echo "Forzando parada de procesos residuales y limpieza extra..."
+
+# Parar y deshabilitar cualquier unidad conocida
+KNOWN_UNITS=(logitechmediaserver squeezelite squeezeboxserver lyrion-music-server lyrion-music-service)
+for u in "${KNOWN_UNITS[@]}"; do
+  unit="${u}.service"
+  sudo systemctl stop "${unit}" 2>/dev/null || true
+  sudo systemctl disable "${unit}" 2>/dev/null || true
+  sudo systemctl mask "${unit}" 2>/dev/null || true
+  for path in "/etc/systemd/system/${unit}" "/lib/systemd/system/${unit}" "/usr/lib/systemd/system/${unit}"; do
+    if [ -f "$path" ]; then
+      echo "Removing unit file $path"
+      sudo rm -f "$path" || true
+    fi
+  done
+done
+sudo systemctl daemon-reload || true
+
+# Remove SysV init script if present
+if [ -f /etc/init.d/squeezeboxserver ]; then
+  echo "Removing /etc/init.d/squeezeboxserver"
+  sudo /etc/init.d/squeezeboxserver stop 2>/dev/null || true
+  sudo rm -f /etc/init.d/squeezeboxserver || true
+fi
+sudo rm -f /etc/default/squeezeboxserver 2>/dev/null || true
+
+# Kill any remaining LMS-related processes (safe filters)
+PATTERNS='squeezebox|slimserver|logitechmediaserver|server.pl|squeezelite'
+pids="$(pgrep -f "$PATTERNS" || true)"
+if [ -n "$pids" ]; then
+  echo "Matando procesos encontrados: $pids"
+  sudo pkill -f "$PATTERNS" || true
+  sleep 1
+  pids2="$(pgrep -f "$PATTERNS" || true)"
+  if [ -n "$pids2" ]; then
+    echo "Forzando kill -9: $pids2"
+    sudo kill -9 $pids2 || true
+  fi
+fi
+
+# remove leftover sockets/files that may keep service alive
+sudo find /run -maxdepth 1 -type s -name '*squeez*' -exec rm -f {} \; 2>/dev/null || true
+sudo find /tmp -maxdepth 1 -type s -name '*squeeze*' -exec rm -f {} \; 2>/dev/null || true
