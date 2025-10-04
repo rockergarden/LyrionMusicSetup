@@ -3,10 +3,12 @@ Description=Squeezelite (Lyrion)
 After=network.target sound.target
 
 [Service]
+User=squeezeboxserver
+Group=nogroup
+SupplementaryGroups=audio
 Type=simple
-User=lyrion
-ExecStart=/usr/bin/squeezelite -n "Lyrion DAC" -o hw:1
-Restart=always
+ExecStart=/usr/bin/squeezelite -n "Lyrion-DAC" -o plughw:1,0
+Restart=on-failure
 RestartSec=5
 
 [Install]

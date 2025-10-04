@@ -51,13 +51,7 @@ sudo apt install -y wget curl perl git libio-socket-ssl-perl \
     squeezelite alsa-utils pulseaudio-utils
 
 # Crear usuario del sistema para LMS si no existe
-echo -e "${YELLOW}Creando/asegurando usuario del sistema...${NC}"
-if ! id -u "${LMS_USER}" >/dev/null 2>&1; then
-  sudo useradd -r -s /usr/sbin/nologin -m -d "${LMS_HOME}" "${LMS_USER}"
-  echo "Usuario ${LMS_USER} creado"
-else
-  echo "Usuario ${LMS_USER} ya existe"
-fi
+echo -e "${YELLOW}Nota: creación de usuario LMS diferida hasta detectar el usuario que el paquete instala (evita chown a usuario incorrecto)${NC}"
 
 # Descargar e instalar LMS (paquete oficial Lyrion)
 echo -e "${YELLOW}Descargando e instalando Lyrion Music Server (paquete oficial)...${NC}"
@@ -99,6 +93,9 @@ fi
 SERVICE_USER=${SERVICE_USER:-squeezeboxserver}
 LMS_USER="$SERVICE_USER"
 echo "Usando usuario de servicio: $LMS_USER"
+
+# Exportar para que los scripts invocados (sudo env también, pero export asegura disponibilidad)
+export LMS_USER
 
 if ! id -u "$LMS_USER" >/dev/null 2>&1; then
   echo "Creando usuario de sistema $LMS_USER"
@@ -164,7 +161,9 @@ done
 
 # Instalar plugin de Airplay (script se asegura de git y permisos)
 echo -e "${YELLOW}Instalando plugin de Airplay...${NC}"
-bash scripts/install-airplay-plugin.sh
+# Ejecutar instalador como root y pasar LMS_USER para que los chown dentro del script usen el usuario correcto
+# Evita pedir contraseña intentando sudo -u a un usuario sin privilegios.
+sudo env LMS_USER="$LMS_USER" bash scripts/install-airplay-plugin.sh
 
 # Configurar y habilitar Squeezelite (systemd)
 echo -e "${YELLOW}Configurando y habilitando Squeezelite (systemd)...${NC}"
