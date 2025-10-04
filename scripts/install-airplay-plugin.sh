@@ -14,8 +14,14 @@ if [ -f "$CFG" ]; then
 fi
 : "${LMS_USER:=lyrion}"
 
-echo "Instalando plugin RAOP (LMS-Raop) ..."
+echo "Instalando dependencias para RAOP (avahi / compat)..."
+sudo apt update -y || true
+sudo apt install -y avahi-daemon libavahi-compat-libdnssd1 unzip || true
 
+echo "Asegurando avahi-daemon activo..."
+sudo systemctl enable --now avahi-daemon || true
+
+echo "Instalando plugin RAOP (LMS-Raop) ..."
 cd "$TMPDIR"
 
 # intentar git clone sin prompts
@@ -35,8 +41,8 @@ if [ ! -d "raop" ]; then
           unzip -q plugin.zip || true
         else
           mkdir -p unpack && tar -C unpack -xf plugin.zip 2>/dev/null || true
+          cd unpack || true
         fi
-        # detectar subdir creado por unzip
         subdir=$(ls -d */ | grep -i 'LMS-Raop' | head -n1 | sed 's:/$::' || true)
         if [ -n "$subdir" ]; then
           mv "$subdir" raop
@@ -62,10 +68,20 @@ fi
 sudo mkdir -p "$PLUGIN_DIR"
 sudo rsync -a raop/ "$PLUGIN_DIR/RAOP/"
 sudo chown -R "$LMS_USER":"$LMS_USER" "$PLUGIN_DIR/RAOP"
+sudo chmod -R u+rwX,g+rX,o-rwx "$PLUGIN_DIR/RAOP"
 
-# Reiniciar cualquier unidad LMS conocida si existe
-RESTART_UNITS=(logitechmediaserver squeezeboxserver lyrion-music-server lyrionmusicserver)
+# abrir puertos mDNS/RAOP si ufw está habilitado
+if command -v ufw >/dev/null 2>&1 && sudo ufw status | grep -q "Status: active"; then
+  echo "Abriendo puertos mDNS (5353/udp) y RAOP (5000/tcp) en ufw..."
+  sudo ufw allow 5353/udp || true
+  sudo ufw allow 5000/tcp || true
+fi
 
+# Reiniciar avahi y reiniciar cualquier unidad LMS conocida si existe
+echo "Reiniciando avahi-daemon y servicios LMS para que detecten el plugin..."
+sudo systemctl restart avahi-daemon || true
+
+RESTART_UNITS=(lyrionmusicserver logitechmediaserver squeezeboxserver lyrion-music-server)
 for u in "${RESTART_UNITS[@]}"; do
   unit="${u}.service"
   # Desmascarar antes para permitir restart
@@ -79,6 +95,16 @@ for u in "${RESTART_UNITS[@]}"; do
 done
 
 echo "Plugin RAOP instalado en $PLUGIN_DIR/RAOP"
+echo "Esperando 5s para que avahi anuncie servicios..."
+sleep 5
+
+# comprobaciones rápidas
+echo "Comprobación rápida de anuncio mDNS (avahi-browse):"
+if command -v avahi-browse >/dev/null 2>&1; then
+  avahi-browse -a -t | egrep 'raop|_raop|AirPlay' || true
+else
+  echo "avahi-browse no disponible. Ejecuta: avahi-browse -a -t"
+fi
 
 cd - >/dev/null 2>&1 || true
 rm -rf "$TMPDIR"
