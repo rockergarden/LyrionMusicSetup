@@ -1,0 +1,17 @@
+[Unit]
+Description=Lyrion Music Server
+After=network.target
+Wants=network.target
+
+[Service]
+Type=forking
+User=lyrion
+Group=lyrion
+ExecStart=/usr/sbin/squeezeboxserver --daemon --prefsdir=/var/lib/squeezeboxserver/prefs --logdir=/var/log/squeezeboxserver --cachedir=/var/lib/squeezeboxserver/cache
+ExecReload=/bin/kill -HUP $MAINPID
+PIDFile=/var/run/squeezeboxserver.pid
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
