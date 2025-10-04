@@ -138,6 +138,11 @@ done
 echo -e "${YELLOW}Instalando plugin de Airplay...${NC}"
 bash scripts/install-airplay-plugin.sh
 
+# Configurar y habilitar Squeezelite (systemd)
+echo -e "${YELLOW}Configurando y habilitando Squeezelite (systemd)...${NC}"
+chmod +x scripts/setup-squeezelite-systemd.sh
+sudo bash scripts/setup-squeezelite-systemd.sh
+
 echo -e "${GREEN}¡Instalación completada!${NC}"
 echo -e "${GREEN}Accede a LMS en: http://localhost:9000${NC}"
 echo -e "${GREEN}Configuración de audio completada para DAC USB${NC}"

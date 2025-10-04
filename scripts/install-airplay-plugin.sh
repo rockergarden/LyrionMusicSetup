@@ -64,12 +64,17 @@ sudo rsync -a raop/ "$PLUGIN_DIR/RAOP/"
 sudo chown -R "$LMS_USER":"$LMS_USER" "$PLUGIN_DIR/RAOP"
 
 # Reiniciar cualquier unidad LMS conocida si existe
-RESTART_UNITS=(logitechmediaserver squeezeboxserver lyrion-music-server)
+RESTART_UNITS=(logitechmediaserver squeezeboxserver lyrion-music-server lyrionmusicserver)
+
 for u in "${RESTART_UNITS[@]}"; do
   unit="${u}.service"
+  # Desmascarar antes para permitir restart
+  sudo systemctl unmask "$unit" 2>/dev/null || true
   if systemctl list-unit-files | grep -qw "$unit"; then
     echo "Reiniciando $unit"
-    sudo systemctl restart "$unit" || true
+    sudo systemctl restart "$unit" 2>/dev/null || sudo systemctl start "$unit" 2>/dev/null || true
+  else
+    echo "Unidad $unit no encontrada, omitiendo."
   fi
 done
 
