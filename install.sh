@@ -86,6 +86,34 @@ if [ -f "services/squeezelite.service" ]; then
 fi
 sudo systemctl daemon-reload
 
+# === MOVER AQUI: asegurar usuario/dirs/permisos antes de arrancar la unidad LMS ===
+echo -e "${YELLOW}Determinando usuario que ejecutará LMS y asegurando permisos...${NC}"
+SERVICE_USER=$(sudo systemctl show -p User --value lyrionmusicserver.service 2>/dev/null || true)
+if [ -z "$SERVICE_USER" ]; then
+  UNIT_FILE=$(sudo grep -Il "/usr/sbin/squeezeboxserver" /etc/systemd/system /lib/systemd/system /usr/lib/systemd/system 2>/dev/null | head -n1 || true)
+  if [ -n "$UNIT_FILE" ]; then
+    UNIT_NAME=$(basename "$UNIT_FILE")
+    SERVICE_USER=$(sudo systemctl show -p User --value "$UNIT_NAME" 2>/dev/null || true)
+  fi
+fi
+SERVICE_USER=${SERVICE_USER:-squeezeboxserver}
+LMS_USER="$SERVICE_USER"
+echo "Usando usuario de servicio: $LMS_USER"
+
+if ! id -u "$LMS_USER" >/dev/null 2>&1; then
+  echo "Creando usuario de sistema $LMS_USER"
+  sudo useradd -r -s /usr/sbin/nologin -m -d "${LMS_HOME}" "$LMS_USER" || true
+fi
+
+sudo mkdir -p /var/lib/squeezeboxserver/prefs /var/lib/squeezeboxserver/cache /var/lib/squeezeboxserver/cache/tmp /var/log/squeezeboxserver
+if sudo chown -R "$LMS_USER":"$LMS_USER" /var/lib/squeezeboxserver /var/log/squeezeboxserver 2>/dev/null; then
+  true
+else
+  sudo chown -R "$LMS_USER":nogroup /var/lib/squeezeboxserver /var/log/squeezeboxserver || true
+fi
+sudo chmod -R 750 /var/lib/squeezeboxserver /var/log/squeezeboxserver
+# === FIN BLOQUE ===
+
 # Detectar unidades LMS instaladas (no conjeturas: buscar .service reales)
 echo -e "${YELLOW}Buscando unidad systemd generada por el paquete LMS...${NC}"
 FOUND_UNITS="$(sudo find /etc/systemd/system /lib/systemd/system /usr/lib/systemd/system -type f -name '*.service' 2>/dev/null \
@@ -146,37 +174,3 @@ sudo bash scripts/setup-squeezelite-systemd.sh
 echo -e "${GREEN}¡Instalación completada!${NC}"
 echo -e "${GREEN}Accede a LMS en: http://localhost:9000${NC}"
 echo -e "${GREEN}Configuración de audio completada para DAC USB${NC}"
-
-# === NUEVO BLOQUE: detectar usuario del servicio LMS y asegurar dirs/permisos ===
-echo -e "${YELLOW}Determinando usuario que ejecutará LMS y asegurando permisos...${NC}"
-# Intentar obtener User directamente de la unidad conocida
-SERVICE_USER=$(sudo systemctl show -p User --value lyrionmusicserver.service 2>/dev/null || true)
-# Si no está, buscar fichero .service que invoque el binario y leer su User
-if [ -z "$SERVICE_USER" ]; then
-  UNIT_FILE=$(sudo grep -Il "/usr/sbin/squeezeboxserver" /etc/systemd/system /lib/systemd/system /usr/lib/systemd/system 2>/dev/null | head -n1 || true)
-  if [ -n "$UNIT_FILE" ]; then
-    UNIT_NAME=$(basename "$UNIT_FILE")
-    SERVICE_USER=$(sudo systemctl show -p User --value "$UNIT_NAME" 2>/dev/null || true)
-  fi
-fi
-# Fallback razonable si no se detecta
-SERVICE_USER=${SERVICE_USER:-squeezeboxserver}
-LMS_USER="$SERVICE_USER"
-echo "Usando usuario de servicio: $LMS_USER"
-
-# Crear usuario de sistema solo si realmente falta (normalmente el paquete ya lo crea)
-if ! id -u "$LMS_USER" >/dev/null 2>&1; then
-  echo "Creando usuario de sistema $LMS_USER"
-  sudo useradd -r -s /usr/sbin/nologin -m -d "${LMS_HOME}" "$LMS_USER" || true
-fi
-
-# Asegurar directorios y permisos que LMS requiere
-sudo mkdir -p /var/lib/squeezeboxserver/prefs /var/lib/squeezeboxserver/cache /var/log/squeezeboxserver
-# chown al usuario detectado; si el grupo no existe, intentar con nogroup
-if sudo chown -R "$LMS_USER":"$LMS_USER" /var/lib/squeezeboxserver /var/log/squeezeboxserver 2>/dev/null; then
-  true
-else
-  sudo chown -R "$LMS_USER":nogroup /var/lib/squeezeboxserver /var/log/squeezeboxserver || true
-fi
-sudo chmod -R 750 /var/lib/squeezeboxserver /var/log/squeezeboxserver
-# === FIN BLOQUE ===
