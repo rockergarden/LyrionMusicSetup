@@ -76,46 +76,53 @@ else
   sudo apt install -y lyrionmusicserver 2>/dev/null || echo "lyrionmusicserver no disponible en repositorios"
 fi
 
-# Copiar/añadir servicios systemd (mapea a nombres esperados)
-echo -e "${YELLOW}Configurando servicios systemd...${NC}"
-# mapar custom service a nombre logitechmediaserver.service si es necesario
-if [ -f "services/logitechmediaserver.service" ]; then
-  sudo cp services/logitechmediaserver.service /etc/systemd/system/logitechmediaserver.service
-elif [ -f "services/lyrion-music-service.service" ]; then
-  sudo cp services/lyrion-music-service.service /etc/systemd/system/logitechmediaserver.service
-else
-  echo "Advertencia: no se encontró service de LMS en services/, el paquete instalado puede suministrarlo"
+# Copiar/añadir unit files del repo si tienes overrides
+echo -e "${YELLOW}Instalando unit files personalizados (si existen) ...${NC}"
+if [ -f "services/lyrion-music-service.service" ]; then
+  sudo cp services/lyrion-music-service.service /etc/systemd/system/ || true
 fi
-
 if [ -f "services/squeezelite.service" ]; then
-  sudo cp services/squeezelite.service /etc/systemd/system/squeezelite.service
+  sudo cp services/squeezelite.service /etc/systemd/system/ || true
 fi
-
 sudo systemctl daemon-reload
 
-# Configurar permisos de directorios de música (usa scripts/setup-permissions.sh)
-echo -e "${YELLOW}Configurando permisos...${NC}"
-bash scripts/setup-permissions.sh
+# Detectar unidades LMS instaladas (no conjeturas: buscar .service reales)
+echo -e "${YELLOW}Buscando unidad systemd generada por el paquete LMS...${NC}"
+FOUND_UNITS="$(sudo find /etc/systemd/system /lib/systemd/system /usr/lib/systemd/system -type f -name '*.service' 2>/dev/null \
+  | xargs -r -n1 basename \
+  | egrep -i 'lyrion|logitech|squeezebox|slimserver|lyrionmusicserver' || true)"
 
-# Configurar audio: asound y /etc/default/squeezelite
-echo -e "${YELLOW}Configurando audio...${NC}"
-bash scripts/configure-audio.sh
+if [ -n "$FOUND_UNITS" ]; then
+  echo "Unidades detectadas: $FOUND_UNITS"
+  while read -r unit; do
+    [ -z "$unit" ] && continue
+    echo "Desmascarando, habilitando y arrancando $unit ..."
+    sudo systemctl unmask "$unit" 2>/dev/null || true
+    sudo systemctl enable --now "$unit" 2>/dev/null || sudo systemctl restart "$unit" 2>/dev/null || true
+  done <<< "$FOUND_UNITS"
+else
+  echo "No se detectó unidad LMS entre los servicios del sistema."
+  echo "Intentando localizar unidades por nombre conocido alternativo..."
+  # Intentar nombres comunes por compatibilidad
+  CANDIDATES=(lyrionmusicserver logitechmediaserver squeezeboxserver slimserver)
+  for name in "${CANDIDATES[@]}"; do
+    unit="${name}.service"
+    if systemctl list-unit-files | grep -qw "$unit"; then
+      echo "Found unit $unit, enabling..."
+      sudo systemctl unmask "$unit" 2>/dev/null || true
+      sudo systemctl enable --now "$unit" 2>/dev/null || sudo systemctl restart "$unit" 2>/dev/null || true
+      FOUND_UNITS="$unit"
+      break
+    fi
+  done
+fi
 
-# Habilitar e iniciar servicios (intenta nombres estándar)
-echo -e "${YELLOW}Habilitando e iniciando servicios...${NC}"
-SERVICES_TO_ENABLE=(logitechmediaserver squeezelite)
-for svc in "${SERVICES_TO_ENABLE[@]}"; do
-  unit="${svc}.service"
-  # intentar desmaskear antes
-  sudo systemctl unmask "$unit" 2>/dev/null || true
-  if systemctl list-unit-files | grep -qw "$unit"; then
-    echo "Enabling and starting $unit"
-    sudo systemctl enable "$svc" 2>/dev/null || true
-    sudo systemctl restart "$svc" 2>/dev/null || true
-  else
-    echo "Aviso: $unit no encontrado en systemd, omitiendo enable/start"
-  fi
-done
+# Siempre habilitar/arrancar squeezelite si está disponible
+if systemctl list-unit-files | grep -qw squeezelite.service; then
+  echo "Enabling and starting squeezelite.service"
+  sudo systemctl unmask squeezelite.service 2>/dev/null || true
+  sudo systemctl enable --now squeezelite.service 2>/dev/null || sudo systemctl restart squeezelite.service 2>/dev/null || true
+fi
 
 # Esperar LMS up antes de instalar plugins
 echo -e "${YELLOW}Esperando a que LMS esté accesible (hasta 60s)...${NC}"
