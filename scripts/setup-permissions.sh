@@ -1,21 +1,36 @@
 #!/bin/bash
 set -e
+
 # Cargar configuración
-source "$(dirname "$0")/../config/lms-permissions.conf"
+CFG="$(dirname "$0")/../config/lms-permissions.conf"
+if [ -f "$CFG" ]; then
+  # shellcheck disable=SC1091
+  source "$CFG"
+fi
+
+# Valores por defecto
+: "${LMS_USER:=lyrion}"
+# Determinar HOST_USER si no está establecido en config
+if [ -z "${HOST_USER:-}" ]; then
+  HOST_USER=$(logname 2>/dev/null || echo "$SUDO_USER" || echo "$USER")
+fi
 
 echo "Aplicando permisos a directorios de música..."
+
+# Verificar que el usuario LMS exista
 if ! id "$LMS_USER" &>/dev/null; then
-  echo "Usuario $LMS_USER no existe. Créalo antes o ajusta config/lms-permissions.conf"
-  exit 1
+  echo "Usuario $LMS_USER no existe. Creando usuario sistema..."
+  sudo useradd -r -s /usr/sbin/nologin -m -d "/opt/$LMS_USER" "$LMS_USER" || true
 fi
 
 for dir in "${MUSIC_DIRS[@]}"; do
   if [ -d "$dir" ]; then
     echo "Config: $dir"
+    # Mantener propietario del host (ej: cristian) y dar lectura al grupo
     sudo chown -R "$HOST_USER":"$HOST_USER" "$dir" || true
-    # Dar lectura/ejecución al grupo y ACL para el usuario LMS
     sudo chmod -R g+r "$dir" || true
     sudo find "$dir" -type d -exec chmod g+x {} \; || true
+    # ACL para usuario LMS
     sudo setfacl -R -m u:"$LMS_USER":rX "$dir" 2>/dev/null || true
   else
     echo "Advertencia: $dir no existe"
