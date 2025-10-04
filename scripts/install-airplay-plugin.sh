@@ -5,7 +5,8 @@ PLUGIN_DIR="/var/lib/squeezeboxserver/Plugins"
 TMPDIR=$(mktemp -d)
 CFG="config/lms-permissions.conf"
 LMS_USER="lyrion"
-GIT_REPO="${GIT_REPO:-https://github.com/lms-community/lms-plugin-airplay.git}"
+# usar el plugin recomendado por lyrion.org
+GIT_REPO="${GIT_REPO:-https://github.com/philippe44/LMS-Raop.git}"
 
 if [ -f "$CFG" ]; then
   # shellcheck disable=SC1091
@@ -13,32 +14,35 @@ if [ -f "$CFG" ]; then
 fi
 : "${LMS_USER:=lyrion}"
 
-echo "Instalando plugin AirPlay (si está disponible)..."
+echo "Instalando plugin RAOP (LMS-Raop) ..."
+
 cd "$TMPDIR"
 
-# Preferir git clone sin prompt (no interactive credentials)
+# intentar git clone sin prompts
 if command -v git >/dev/null 2>&1; then
   echo "Intentando git clone (no-interactive)..."
-  # evitar prompts por credenciales: si requiere auth fallará inmediatamente
-  GIT_TERMINAL_PROMPT=0 git clone --depth 1 "$GIT_REPO" airplay 2>/dev/null || true
+  GIT_TERMINAL_PROMPT=0 git clone --depth 1 "$GIT_REPO" raop 2>/dev/null || true
 fi
 
-# si no hay directorio 'airplay', intentar descargar ZIP (main o master)
-if [ ! -d "airplay" ]; then
+# si no hay directorio 'raop', intentar descargar ZIP (main o master)
+if [ ! -d "raop" ]; then
   echo "git clone falló o no disponible. Intentando descargar ZIP desde GitHub..."
   for branch in main master; do
     ZIPURL="${GIT_REPO%.git}/archive/refs/heads/${branch}.zip"
     if command -v curl >/dev/null 2>&1; then
       if curl -fsSL "$ZIPURL" -o plugin.zip; then
-        unzip -q plugin.zip || true
-        # unzip crea directory like lms-plugin-airplay-main
-        subdir=$(ls -d */ | grep -i lms-plugin-airplay | head -n1 | sed 's:/$::' || true)
-        if [ -n "$subdir" ]; then
-          mv "$subdir" airplay
+        if command -v unzip >/dev/null 2>&1; then
+          unzip -q plugin.zip || true
         else
-          # fallback: try any folder name created
-          first=$(find . -maxdepth 1 -type d -name "*lms-plugin-airplay*" | head -n1 || true)
-          if [ -n "$first" ]; then mv "$first" airplay; fi
+          mkdir -p unpack && tar -C unpack -xf plugin.zip 2>/dev/null || true
+        fi
+        # detectar subdir creado por unzip
+        subdir=$(ls -d */ | grep -i 'LMS-Raop' | head -n1 | sed 's:/$::' || true)
+        if [ -n "$subdir" ]; then
+          mv "$subdir" raop
+        else
+          first=$(find . -maxdepth 1 -type d -name "*LMS-Raop*" | head -n1 || true)
+          if [ -n "$first" ]; then mv "$first" raop; fi
         fi
         break
       fi
@@ -47,23 +51,29 @@ if [ ! -d "airplay" ]; then
 fi
 
 # si aún no hay plugin, abortar sin pedir credenciales
-if [ ! -d "airplay" ]; then
-  echo "No se pudo obtener el plugin AirPlay (git y descarga ZIP fallaron). Omitiendo."
+if [ ! -d "raop" ]; then
+  echo "No se pudo obtener LMS-Raop (git y descarga ZIP fallaron). Omitiendo."
   cd - >/dev/null 2>&1 || true
   rm -rf "$TMPDIR"
   exit 0
 fi
 
+# instalar en Plugins/RAOP (idempotente)
 sudo mkdir -p "$PLUGIN_DIR"
-sudo rsync -a airplay/ "$PLUGIN_DIR/AirPlay/"
-sudo chown -R "$LMS_USER":"$LMS_USER" "$PLUGIN_DIR/AirPlay"
+sudo rsync -a raop/ "$PLUGIN_DIR/RAOP/"
+sudo chown -R "$LMS_USER":"$LMS_USER" "$PLUGIN_DIR/RAOP"
 
-# Reiniciar LMS si está instalado como servicio
-if systemctl list-unit-files | grep -qw logitechmediaserver.service; then
-  sudo systemctl restart logitechmediaserver || true
-fi
+# Reiniciar cualquier unidad LMS conocida si existe
+RESTART_UNITS=(logitechmediaserver squeezeboxserver lyrion-music-server)
+for u in "${RESTART_UNITS[@]}"; do
+  unit="${u}.service"
+  if systemctl list-unit-files | grep -qw "$unit"; then
+    echo "Reiniciando $unit"
+    sudo systemctl restart "$unit" || true
+  fi
+done
 
-echo "Plugin AirPlay instalado en $PLUGIN_DIR/AirPlay"
+echo "Plugin RAOP instalado en $PLUGIN_DIR/RAOP"
 
 cd - >/dev/null 2>&1 || true
 rm -rf "$TMPDIR"

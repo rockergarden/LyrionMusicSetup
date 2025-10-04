@@ -59,19 +59,21 @@ else
   echo "Usuario ${LMS_USER} ya existe"
 fi
 
-# Descargar e instalar LMS
-echo -e "${YELLOW}Descargando Lyrion Music Server...${NC}"
-LMS_VERSION=$(curl -s https://api.github.com/repos/LMS-Community/slimserver/releases/latest | grep -Po '"tag_name": "\K.*?(?=")') || true
-if [ -z "$LMS_VERSION" ]; then
-  echo "No se pudo obtener versión desde GitHub, intentando paquete por defecto..."
+# Descargar e instalar LMS (paquete oficial Lyrion)
+echo -e "${YELLOW}Descargando e instalando Lyrion Music Server (paquete oficial)...${NC}"
+LYRION_URL="https://downloads.lms-community.org/LyrionMusicServer_v9.0.3/lyrionmusicserver_9.0.3_amd64.deb"
+TMP_DEB="/tmp/lyrionmusicserver_9.0.3_amd64.deb"
+
+if curl -fsSL "$LYRION_URL" -o "$TMP_DEB"; then
+  echo "Paquete descargado: $TMP_DEB"
+  sudo dpkg -i "$TMP_DEB" || sudo apt-get install -f -y
+  sudo rm -f "$TMP_DEB" || true
+  sudo systemctl daemon-reload
 else
-  LMS_DEB_URL="https://github.com/LMS-Community/slimserver/releases/download/${LMS_VERSION}/logitechmediaserver_${LMS_VERSION}_all.deb"
-  wget -O /tmp/lms.deb "$LMS_DEB_URL" || true
-  if [ -f /tmp/lms.deb ]; then
-    sudo dpkg -i /tmp/lms.deb || sudo apt-get install -f -y
-  else
-    echo "Paquete .deb no descargado, omitiendo dpkg step"
-  fi
+  echo -e "${RED}No se pudo descargar $LYRION_URL${NC}"
+  echo "Intentando instalar desde repositorios locales/apt..."
+  sudo apt update || true
+  sudo apt install -y lyrionmusicserver 2>/dev/null || echo "lyrionmusicserver no disponible en repositorios"
 fi
 
 # Copiar/añadir servicios systemd (mapea a nombres esperados)
