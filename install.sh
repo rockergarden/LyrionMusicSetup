@@ -101,17 +101,19 @@ bash scripts/configure-audio.sh
 
 # Habilitar e iniciar servicios (intenta nombres estándar)
 echo -e "${YELLOW}Habilitando e iniciando servicios...${NC}"
-if systemctl list-unit-files | grep -qw logitechmediaserver.service; then
-  sudo systemctl enable logitechmediaserver
-  sudo systemctl restart logitechmediaserver || true
-else
-  echo "logitechmediaserver.service no disponible en systemd"
-fi
-
-if systemctl list-unit-files | grep -qw squeezelite.service; then
-  sudo systemctl enable squeezelite
-  sudo systemctl restart squeezelite || true
-fi
+SERVICES_TO_ENABLE=(logitechmediaserver squeezelite)
+for svc in "${SERVICES_TO_ENABLE[@]}"; do
+  unit="${svc}.service"
+  # intentar desmaskear antes
+  sudo systemctl unmask "$unit" 2>/dev/null || true
+  if systemctl list-unit-files | grep -qw "$unit"; then
+    echo "Enabling and starting $unit"
+    sudo systemctl enable "$svc" 2>/dev/null || true
+    sudo systemctl restart "$svc" 2>/dev/null || true
+  else
+    echo "Aviso: $unit no encontrado en systemd, omitiendo enable/start"
+  fi
+done
 
 # Esperar LMS up antes de instalar plugins
 echo -e "${YELLOW}Esperando a que LMS esté accesible (hasta 60s)...${NC}"
