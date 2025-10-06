@@ -59,6 +59,13 @@ if [ -f "$DROPIN_FILE" ]; then
   sudo systemctl daemon-reload
 fi
 
+# Eliminar wrapper script si existe
+WRAPPER_SCRIPT="/usr/local/bin/shairport-sync-wrapper.sh"
+if [ -f "$WRAPPER_SCRIPT" ]; then
+  echo -e "${YELLOW}Eliminando wrapper script: ${WRAPPER_SCRIPT}${NC}"
+  sudo rm -f "$WRAPPER_SCRIPT"
+fi
+
 # Hacer backup de la config y luego eliminar
 SH_CONF="/etc/shairport-sync.conf"
 if [ -f "$SH_CONF" ]; then

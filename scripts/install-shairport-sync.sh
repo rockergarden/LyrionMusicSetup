@@ -77,102 +77,68 @@ else
   sudo usermod -aG audio "$(whoami)" || true
 fi
 
-# Crear hook script robusto que para LMS y espera a que /dev/snd esté libre
-echo -e "${YELLOW}Creando hook script /usr/local/bin/lyrion-shairport-hook.sh${NC}"
-HOOK_SCRIPT="/usr/local/bin/lyrion-shairport-hook.sh"
-TMP_HOOK="$(mktemp)"
-cat > "$TMP_HOOK" <<'EOFHOOK'
+# Crear wrapper script que para LMS ANTES de ejecutar shairport-sync
+echo -e "${YELLOW}Creando wrapper script /usr/local/bin/shairport-sync-wrapper.sh${NC}"
+WRAPPER_SCRIPT="/usr/local/bin/shairport-sync-wrapper.sh"
+TMP_WRAPPER="$(mktemp)"
+cat > "$TMP_WRAPPER" <<'EOFWRAPPER'
 #!/bin/bash
 set -e
 
-# Hook para systemd drop-in de shairport-sync
-# Usage: /usr/local/bin/lyrion-shairport-hook.sh start|stop
+# Wrapper para shairport-sync que libera ALSA antes de arrancar
+LMS_UNIT="lyrionmusicserver.service"
+MAX_WAIT=25
 
-LMS_UNIT="${LMS_UNIT:-lyrionmusicserver.service}"
-MAX_WAIT=${MAX_WAIT:-25}
+log() { echo "[shairport-wrapper] $*"; }
 
-log() { echo "[lyrion-hook] $*"; }
+# Parar LMS y procesos que retengan ALSA
+log "Parando ${LMS_UNIT} y procesos relacionados"
+systemctl stop "${LMS_UNIT}" 2>/dev/null || true
+pkill -f squeezeboxserver 2>/dev/null || true
+pkill -f logitechmediaserver 2>/dev/null || true
+pkill -f slimserver 2>/dev/null || true
 
-wait_for_snd_free() {
-  local count=0
-  while fuser -s /dev/snd/* 2>/dev/null; do
-    sleep 1
-    count=$((count+1))
-    if [ "$count" -ge "$MAX_WAIT" ]; then
-      log "Timeout esperando /dev/snd libre"
-      break
-    fi
-  done
-}
-
-stop_lms_and_holders() {
-  log "Parando unidad systemd ${LMS_UNIT}"
-  if systemctl list-unit-files | grep -qw "${LMS_UNIT}"; then
-    systemctl stop "${LMS_UNIT}" 2>/dev/null || true
+# Esperar hasta que /dev/snd esté libre
+count=0
+while fuser -s /dev/snd/* 2>/dev/null; do
+  sleep 1
+  count=$((count+1))
+  if [ "$count" -ge "$MAX_WAIT" ]; then
+    log "WARN: Timeout esperando /dev/snd libre. Intentando arrancar shairport-sync de todos modos."
+    break
   fi
+done
+log "/dev/snd libre (o timeout). Arrancando shairport-sync real."
 
-  # Matar procesos conocidos de LMS que puedan retener ALSA
-  log "Matando procesos LMS conocidos (squeezeboxserver/logitechmediaserver)"
-  pkill -f squeezeboxserver 2>/dev/null || true
-  pkill -f logitechmediaserver 2>/dev/null || true
-  pkill -f slimserver 2>/dev/null || true
+# Ejecutar shairport-sync real (reemplazar proceso actual con exec)
+exec /usr/bin/shairport-sync "$@"
+EOFWRAPPER
 
-  # Esperar hasta que /dev/snd esté libre
-  wait_for_snd_free
-  log "/dev/snd libre (o timeout alcanzado)"
-}
+# Reemplazar LMS_UNIT con valor detectado
+sed -i.bak "s/LMS_UNIT=\"lyrionmusicserver.service\"/LMS_UNIT=\"${LMS_UNIT}\"/" "$TMP_WRAPPER" || true
+sudo mv "$TMP_WRAPPER" "$WRAPPER_SCRIPT"
+sudo chmod +x "$WRAPPER_SCRIPT"
 
-start_lms_and_restore_alsa() {
-  log "Iniciando unidad systemd ${LMS_UNIT}"
-  if systemctl list-unit-files | grep -qw "${LMS_UNIT}"; then
-    systemctl start "${LMS_UNIT}" 2>/dev/null || true
-  fi
-
-  # Intentar restaurar estado ALSA para que LMS pueda controlar DAC de nuevo
-  log "Restaurando ALSA"
-  if systemctl list-unit-files | grep -qw "alsa-restore.service"; then
-    systemctl restart alsa-restore.service 2>/dev/null || true
-  fi
-  
-  # Forzar reinicio del dispositivo ALSA si existe alsactl
-  if command -v alsactl >/dev/null 2>&1; then
-    alsactl restore 2>/dev/null || true
-  fi
-
-  sleep 2
-  log "Hook start completado"
-}
-
-case "$1" in
-  start) stop_lms_and_holders ;;
-  stop)  start_lms_and_restore_alsa ;;
-  *) echo "Usage: $0 start|stop"; exit 2 ;;
-esac
-EOFHOOK
-
-# Reemplazar variable LMS_UNIT en el hook con valor detectado
-sed -i.bak "s/LMS_UNIT=\${LMS_UNIT:-lyrionmusicserver.service}/LMS_UNIT=\${LMS_UNIT:-${LMS_UNIT}}/" "$TMP_HOOK" || true
-sudo mv "$TMP_HOOK" "$HOOK_SCRIPT"
-sudo chmod +x "$HOOK_SCRIPT"
-
-# Crear drop-in systemd para conmutar entre LMS y Shairport‑Sync usando el hook
+# Override del servicio systemd para usar el wrapper en lugar del binario directo
 DROPIN_DIR="/etc/systemd/system/shairport-sync.service.d"
-echo -e "${YELLOW}Creando drop-in systemd para usar hook al iniciar/parar Shairport${NC}"
+echo -e "${YELLOW}Creando override systemd para usar wrapper${NC}"
 sudo mkdir -p "$DROPIN_DIR"
 TMP_DROPIN="$(mktemp)"
 cat > "$TMP_DROPIN" <<EOF
 [Service]
-# Antes de arrancar Shairport‑Sync: ejecutar hook que para LMS y espera /dev/snd libre
-ExecStartPre=${HOOK_SCRIPT} start
-# Al parar Shairport‑Sync: ejecutar hook que arranca LMS y restaura ALSA
-ExecStopPost=${HOOK_SCRIPT} stop
+# Limpiar ExecStart original y reemplazar con wrapper
+ExecStart=
+ExecStart=${WRAPPER_SCRIPT}
+# Al parar shairport-sync, reiniciar LMS
+ExecStopPost=/bin/systemctl start ${LMS_UNIT}
+ExecStopPost=/bin/sh -c 'if command -v alsactl >/dev/null 2>&1; then alsactl restore 2>/dev/null || true; fi'
 EOF
 sudo mv "$TMP_DROPIN" "${DROPIN_DIR}/lyrion-bridge.conf"
 sudo chmod 644 "${DROPIN_DIR}/lyrion-bridge.conf"
 
 # Recargar systemd y (re)iniciar shairport-sync
 sudo systemctl daemon-reload
-sudo systemctl enable --now shairport-sync.service || sudo systemctl restart shairport-sync.service || true
+sudo systemctl restart shairport-sync.service || true
 sleep 2
 
 if systemctl is-active --quiet shairport-sync.service; then
@@ -183,9 +149,9 @@ fi
 
 echo -e "${GREEN}Instalación completada. Puntos importantes:${NC}"
 echo "- /etc/shairport-sync.conf configurado para DAC: ${DAC_DEVICE} (mixer_enabled=no)"
-echo "- Hook script creado: ${HOOK_SCRIPT}"
-echo "- Systemd drop-in: ${DROPIN_DIR}/lyrion-bridge.conf"
-echo "- Al conectar AirPlay, el servicio ${LMS_UNIT} será detenido automáticamente"
+echo "- Wrapper script creado: ${WRAPPER_SCRIPT}"
+echo "- Systemd override: ${DROPIN_DIR}/lyrion-bridge.conf"
+echo "- Al conectar AirPlay, el wrapper parará ${LMS_UNIT} automáticamente"
 echo "- Al desconectar AirPlay, ${LMS_UNIT} se reiniciará automáticamente"
 echo
 echo -e "${YELLOW}Verificaciones recomendadas:${NC}"
