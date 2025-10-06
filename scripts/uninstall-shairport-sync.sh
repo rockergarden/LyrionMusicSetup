@@ -76,9 +76,17 @@ fi
 
 # Desinstalar paquete y dependencias extra instaladas por apt
 echo -e "${YELLOW}Desinstalando paquete shairport-sync (apt purge)...${NC}"
-sudo apt update
-sudo apt purge -y shairport-sync 2>/dev/null || true
-sudo apt autoremove -y 2>/dev/null || true
+# Si se pasa --no-apt se salta la sección de apt (útil si no hay red o repos mal configurados)
+if echo "$*" | grep -qw -- "--no-apt"; then
+  echo -e "${YELLOW}Modo --no-apt: saltando apt purge/autoremove${NC}"
+else
+  if sudo apt update >/dev/null 2>&1; then
+    sudo apt purge -y shairport-sync 2>/dev/null || true
+    sudo apt autoremove -y 2>/dev/null || true
+  else
+    echo -e "${YELLOW}apt update falló; se omite purge/autoremove. Ejecuta con --no-apt para evitar intentos futuros.${NC}"
+  fi
+fi
 
 # Intentar reiniciar LMS si existía
 if [ -n "$LMS_UNIT" ]; then
