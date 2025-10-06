@@ -85,10 +85,12 @@ sudo mkdir -p "$DROPIN_DIR"
 TMP_DROPIN="$(mktemp)"
 cat > "$TMP_DROPIN" <<EOF
 [Service]
-# Antes de arrancar Shairport‑Sync, intentar parar LMS para liberar dispositivo ALSA
-ExecStartPre=/bin/systemctl --no-block stop ${LMS_UNIT}
-# Al parar Shairport‑Sync, intentar arrancar LMS de nuevo
-ExecStopPost=/bin/systemctl --no-block start ${LMS_UNIT}
+# Antes de arrancar Shairport‑Sync, parar la unidad LMS (bloqueante)
+ExecStartPre=/bin/systemctl stop ${LMS_UNIT}
+# Esperar hasta que /dev/snd esté libre (máx 15s) para asegurar liberación del dispositivo ALSA
+ExecStartPre=/bin/sh -c 'count=0; max=15; while fuser -s /dev/snd/* 2>/dev/null; do sleep 1; count=\$((count+1)); if [ \$count -ge \$max ]; then echo "Timeout waiting for /dev/snd to be free" >&2; break; fi; done'
+# Al parar Shairport‑Sync, intentar arrancar LMS de nuevo (bloqueante)
+ExecStopPost=/bin/systemctl start ${LMS_UNIT}
 EOF
 sudo mv "$TMP_DROPIN" "${DROPIN_DIR}/lyrion-bridge.conf"
 sudo chmod 644 "${DROPIN_DIR}/lyrion-bridge.conf"
