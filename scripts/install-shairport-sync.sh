@@ -97,10 +97,20 @@ systemctl stop "${LMS_UNIT}" 2>/dev/null || true
 pkill -f squeezeboxserver 2>/dev/null || true
 pkill -f logitechmediaserver 2>/dev/null || true
 pkill -f slimserver 2>/dev/null || true
+pkill -f squeezelite 2>/dev/null || true  # CRÍTICO: matar squeezelite
 
 # Esperar hasta que /dev/snd esté libre
 count=0
 while fuser -s /dev/snd/* 2>/dev/null; do
+  log "Esperando a que /dev/snd se libere... (intento $count/$MAX_WAIT)"
+  
+  # Si después de 5 intentos sigue ocupado, forzar kill más agresivo
+  if [ "$count" -eq 5 ]; then
+    log "Forzando kill de procesos ALSA..."
+    pkill -9 -f squeezelite 2>/dev/null || true
+    fuser -k /dev/snd/* 2>/dev/null || true
+  fi
+  
   sleep 1
   count=$((count+1))
   if [ "$count" -ge "$MAX_WAIT" ]; then
@@ -117,7 +127,8 @@ EOFWRAPPER
 # Reemplazar LMS_UNIT con valor detectado
 sed -i.bak "s/LMS_UNIT=\"lyrionmusicserver.service\"/LMS_UNIT=\"${LMS_UNIT}\"/" "$TMP_WRAPPER" || true
 sudo mv "$TMP_WRAPPER" "$WRAPPER_SCRIPT"
-sudo chmod +x "$WRAPPER_SCRIPT"
+sudo chmod 755 "$WRAPPER_SCRIPT"  # FIX: cambiar a 755 para que sea legible y ejecutable
+sudo chown root:root "$WRAPPER_SCRIPT"  # FIX: asegurar que pertenece a root
 
 # Override del servicio systemd para usar el wrapper en lugar del binario directo
 DROPIN_DIR="/etc/systemd/system/shairport-sync.service.d"
@@ -129,17 +140,30 @@ cat > "$TMP_DROPIN" <<EOF
 # Limpiar ExecStart original y reemplazar con wrapper
 ExecStart=
 ExecStart=${WRAPPER_SCRIPT}
-# Al parar shairport-sync, reiniciar LMS
+# Al parar shairport-sync, reiniciar LMS (con /bin/systemctl en lugar de sudo)
 ExecStopPost=/bin/systemctl start ${LMS_UNIT}
 ExecStopPost=/bin/sh -c 'if command -v alsactl >/dev/null 2>&1; then alsactl restore 2>/dev/null || true; fi'
+# Reintentar si falla al arrancar (por si ALSA no se libera a tiempo)
+Restart=on-failure
+RestartSec=5s
+StartLimitBurst=3
 EOF
 sudo mv "$TMP_DROPIN" "${DROPIN_DIR}/lyrion-bridge.conf"
 sudo chmod 644 "${DROPIN_DIR}/lyrion-bridge.conf"
 
 # Recargar systemd y (re)iniciar shairport-sync
 sudo systemctl daemon-reload
-sudo systemctl restart shairport-sync.service || true
+
+# IMPORTANTE: parar el servicio antes de reiniciar para que use el wrapper
+echo -e "${YELLOW}Parando shairport-sync existente (si está corriendo)...${NC}"
+sudo systemctl stop shairport-sync.service 2>/dev/null || true
 sleep 2
+
+# Ahora sí, iniciar con el wrapper
+echo -e "${YELLOW}Iniciando shairport-sync con wrapper...${NC}"
+sudo systemctl enable shairport-sync.service
+sudo systemctl start shairport-sync.service || true
+sleep 3
 
 if systemctl is-active --quiet shairport-sync.service; then
   echo -e "${GREEN}Shairport‑Sync activo y escuchando (AirPlay).${NC}"
